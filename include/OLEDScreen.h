@@ -50,12 +50,10 @@ public:
     int16_t getBufferHeight() const { return BufferHeight; }
 
     // Scrolling functionality
-    void enableVerticalScroll(bool enable);
     void enableHorizontalScroll(bool enable);
     void setScrollOffset(int16_t x, int16_t y);
-    void scrollText(const char* text, int16_t y);
-    void scrollTextVertical(const char* text);
-    void scrollTextHorizontal(const char* text);
+    void scrollTextHorizontal(const char* text, int lineNumber);
+    void updateAllLines();
     void clearScrollBuffer();
 
 private:
@@ -70,12 +68,11 @@ private:
     static const unsigned int yOffset = (BufferHeight - ScreenHeight) / 2;
 
     // Scrolling state
-    bool verticalScrollEnabled;
     bool horizontalScrollEnabled;
     int16_t scrollX;
-    int16_t scrollY;
-    int16_t lastScrollY;
-    static const int MAX_SCROLL_LINES = 20;  // Maximum number of lines to keep in scroll buffer
-    char scrollBuffer[MAX_SCROLL_LINES][72];  // Buffer to store scrollable text
-    int scrollBufferIndex;
+    static const int MAX_SCROLL_LINES = 4;  // Maximum number of scrollable lines
+    static const int MAX_TEXT_LENGTH = 200;  // Maximum length for scrollable text
+    char scrollBuffer[MAX_SCROLL_LINES][MAX_TEXT_LENGTH];  // Buffer to store scrollable text
+    int scrollPositions[MAX_SCROLL_LINES];    // Current scroll position for each line
+    bool lineActive[MAX_SCROLL_LINES];        // Whether each line is still scrolling
 }; 

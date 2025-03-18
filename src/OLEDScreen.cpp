@@ -1,22 +1,24 @@
 #include "OLEDScreen.h"
 
-OLEDScreen::OLEDScreen() : u8g2(U8G2_R0, U8X8_PIN_NONE, 6, 5) {
-    verticalScrollEnabled = false;
+OLEDScreen::OLEDScreen() : u8g2(U8G2_R2, U8X8_PIN_NONE, 6, 5) {
     horizontalScrollEnabled = false;
     scrollX = 0;
-    scrollY = 0;
-    lastScrollY = 0;
-    scrollBufferIndex = 0;
+    for (int i = 0; i < MAX_SCROLL_LINES; i++) {
+        scrollPositions[i] = 0;
+        lineActive[i] = false;
+        scrollBuffer[i][0] = '\0';
+    }
 }
 
 OLEDScreen::OLEDScreen(uint8_t clockPin, uint8_t dataPin) 
-    : u8g2(U8G2_R0, U8X8_PIN_NONE, clockPin, dataPin) {
-    verticalScrollEnabled = false;
+    : u8g2(U8G2_R2, U8X8_PIN_NONE, clockPin, dataPin) {
     horizontalScrollEnabled = false;
     scrollX = 0;
-    scrollY = 0;
-    lastScrollY = 0;
-    scrollBufferIndex = 0;
+    for (int i = 0; i < MAX_SCROLL_LINES; i++) {
+        scrollPositions[i] = 0;
+        lineActive[i] = false;
+        scrollBuffer[i][0] = '\0';
+    }
 }
 
 void OLEDScreen::begin() {
@@ -72,84 +74,77 @@ void OLEDScreen::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2) {
     u8g2.drawLine(xOffset + x1, yOffset + y1, xOffset + x2, yOffset + y2);
 }
 
-void OLEDScreen::enableVerticalScroll(bool enable) {
-    verticalScrollEnabled = enable;
-    if (!enable) {
-        scrollY = 0;
-        lastScrollY = 0;
-    }
-}
-
 void OLEDScreen::enableHorizontalScroll(bool enable) {
     horizontalScrollEnabled = enable;
     if (!enable) {
         scrollX = 0;
+        for (int i = 0; i < MAX_SCROLL_LINES; i++) {
+            scrollPositions[i] = 0;
+            lineActive[i] = false;
+        }
     }
 }
 
 void OLEDScreen::setScrollOffset(int16_t x, int16_t y) {
     scrollX = x;
-    scrollY = y;
 }
 
-void OLEDScreen::scrollText(const char* text, int16_t y) {
-    if (strlen(text) > 71) {
-        // Text is too long, truncate it
-        strncpy(scrollBuffer[scrollBufferIndex], text, 71);
-        scrollBuffer[scrollBufferIndex][71] = '\0';
-    } else {
-        strcpy(scrollBuffer[scrollBufferIndex], text);
-    }
+void OLEDScreen::scrollTextHorizontal(const char* text, int lineNumber) {
+    if (!horizontalScrollEnabled || lineNumber < 0 || lineNumber >= MAX_SCROLL_LINES) return;
     
-    scrollBufferIndex = (scrollBufferIndex + 1) % MAX_SCROLL_LINES;
+    // Store the text in the buffer, ensuring null termination
+    strncpy(scrollBuffer[lineNumber], text, MAX_TEXT_LENGTH - 1);
+    scrollBuffer[lineNumber][MAX_TEXT_LENGTH - 1] = '\0';
+    
+    // Reset scroll position and activate the line
+    scrollPositions[lineNumber] = 0;
+    lineActive[lineNumber] = true;
 }
 
-void OLEDScreen::scrollTextVertical(const char* text) {
-    if (!verticalScrollEnabled) return;
-    
-    // Add new text to buffer
-    scrollText(text, 0);
+void OLEDScreen::updateAllLines() {
+    if (!horizontalScrollEnabled) return;
     
     // Clear display
     clear();
     
-    // Calculate which lines to show based on scroll position
-    int startLine = scrollY / 10;  // Assuming 10 pixels per line
-    int visibleLines = ScreenHeight / 10;
-    
-    // Draw visible lines
-    for (int i = 0; i < visibleLines; i++) {
-        int bufferIndex = (scrollBufferIndex - visibleLines + i + MAX_SCROLL_LINES) % MAX_SCROLL_LINES;
-        setCursor(0, i * 10);
-        print(scrollBuffer[bufferIndex]);
-    }
-    
-    update();
-}
-
-void OLEDScreen::scrollTextHorizontal(const char* text) {
-    if (!horizontalScrollEnabled) return;
-    
-    clear();
-    int textWidth = strlen(text) * 6;  // Assuming 6 pixels per character
-    int scrollPosition = scrollX % textWidth;
-    
-    // Draw text at scroll position
-    setCursor(-scrollPosition, 0);
-    print(text);
-    
-    // If text is longer than screen, draw it again to create continuous scroll
-    if (textWidth > ScreenWidth) {
-        setCursor(-scrollPosition + textWidth, 0);
-        print(text);
+    // Draw all active lines
+    for (int i = 0; i < MAX_SCROLL_LINES; i++) {
+        if (lineActive[i]) {
+            // Calculate text width (6 pixels per character)
+            int textWidth = strlen(scrollBuffer[i]) * 6;
+            int scrollPosition = scrollPositions[i];
+            
+            // Calculate vertical position (starting at 7, then 17, 27, 37)
+            int yPos = 7 + (i * 10);
+            
+            // Draw text at scroll position
+            setCursor(-scrollPosition, yPos);
+            print(scrollBuffer[i]);
+            
+            // If text is longer than screen, draw it again to create continuous scroll
+            if (textWidth > ScreenWidth) {
+                // Add 7 spaces (42 pixels) between text repetitions
+                setCursor(-scrollPosition + textWidth + 42, yPos);
+                print(scrollBuffer[i]);
+            }
+            
+            // Update scroll position
+            scrollPositions[i]++;
+            
+            // Reset position when we reach the end of the text plus the space gap
+            if (scrollPositions[i] >= textWidth + 42) {
+                scrollPositions[i] = 0;
+            }
+        }
     }
     
     update();
 }
 
 void OLEDScreen::clearScrollBuffer() {
-    scrollBufferIndex = 0;
     for (int i = 0; i < MAX_SCROLL_LINES; i++) {
+        scrollPositions[i] = 0;
+        lineActive[i] = false;
         scrollBuffer[i][0] = '\0';
     }
 } 
