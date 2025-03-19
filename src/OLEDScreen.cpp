@@ -8,6 +8,9 @@ OLEDScreen::OLEDScreen() : u8g2(U8G2_R2, U8X8_PIN_NONE, 6, 5) {
         lineActive[i] = false;
         scrollBuffer[i][0] = '\0';
     }
+    currentOrientation = Orientation::HORIZONTAL;
+    xOffset = xOffsetHorizontal;
+    yOffset = yOffsetHorizontal;
 }
 
 OLEDScreen::OLEDScreen(uint8_t clockPin, uint8_t dataPin) 
@@ -19,6 +22,9 @@ OLEDScreen::OLEDScreen(uint8_t clockPin, uint8_t dataPin)
         lineActive[i] = false;
         scrollBuffer[i][0] = '\0';
     }
+    currentOrientation = Orientation::HORIZONTAL;
+    xOffset = xOffsetHorizontal;
+    yOffset = yOffsetHorizontal;
 }
 
 void OLEDScreen::begin() {
@@ -147,4 +153,27 @@ void OLEDScreen::clearScrollBuffer() {
         lineActive[i] = false;
         scrollBuffer[i][0] = '\0';
     }
+}
+
+void OLEDScreen::setOrientation(Orientation orientation) {
+    if (orientation == currentOrientation) {
+        return;  // No change needed
+    }
+
+    currentOrientation = orientation;
+    
+    // Update rotation and offsets
+    if (orientation == Orientation::HORIZONTAL) {
+        u8g2.setDisplayRotation(U8G2_R2);
+        xOffset = xOffsetHorizontal;
+        yOffset = yOffsetHorizontal;
+    } else {
+        u8g2.setDisplayRotation(U8G2_R1);
+        xOffset = xOffsetVertical;
+        yOffset = yOffsetVertical;
+    }
+    
+    // Clear and update display
+    clear();
+    update();
 } 

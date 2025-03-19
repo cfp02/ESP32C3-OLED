@@ -5,6 +5,12 @@
 
 class OLEDScreen {
 public:
+    // Screen orientation enum
+    enum class Orientation {
+        HORIZONTAL = 2,  // R2 rotation
+        VERTICAL = 1     // R1 rotation
+    };
+
     // Constructor with default pins (clock=6, data=5)
     OLEDScreen();
     
@@ -13,6 +19,9 @@ public:
     
     // Initialize the display
     void begin();
+    
+    // Set orientation
+    void setOrientation(Orientation orientation);
     
     // Set contrast (0-255)
     void setContrast(uint8_t contrast);
@@ -57,18 +66,31 @@ public:
     void clearScrollBuffer();
 
     // Display control
-    uint8_t getScreenWidth() const { return ScreenWidth; }  // Add getter for ScreenWidth
+    uint8_t getScreenWidth() const { return ScreenWidth; }
 
 private:
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
     
     // Screen dimensions
-    static const unsigned int BufferWidth = 132;
-    static const unsigned int BufferHeight = 64;
-    static const unsigned int ScreenWidth = 72;
-    static const unsigned int ScreenHeight = 40;
-    static const unsigned int xOffset = (BufferWidth - ScreenWidth) / 2;
-    static const unsigned int yOffset = (BufferHeight - ScreenHeight) / 2;
+    static const unsigned int BufferWidth = 128;   // Full buffer width
+    static const unsigned int BufferHeight = 64;   // Full buffer height
+    static const unsigned int ScreenWidth = 72;    // Visible screen width
+    static const unsigned int ScreenHeight = 40;   // Visible screen height
+
+    // Offsets for horizontal orientation (R2)
+    static const unsigned int xOffsetHorizontal = 28;  // (128 - 72) / 2
+    static const unsigned int yOffsetHorizontal = 12;  // (64 - 40) / 2
+
+    // Offsets for vertical orientation (R1)
+    static const unsigned int xOffsetVertical = 12;    // (64 - 40) / 2
+    static const unsigned int yOffsetVertical = 28;    // (128 - 72) / 2
+
+    // Current offsets (will be set based on orientation)
+    unsigned int xOffset = xOffsetHorizontal;
+    unsigned int yOffset = yOffsetHorizontal;
+
+    // Current orientation
+    Orientation currentOrientation = Orientation::HORIZONTAL;
 
     // Scrolling state
     bool horizontalScrollEnabled;

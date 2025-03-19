@@ -65,6 +65,9 @@ void setup() {
     // Initialize display
     display.begin();
     
+    // Set to horizontal orientation (optional since it's default)
+    display.setOrientation(OLEDScreen::Orientation::VERTICAL);
+    
     // Add some sample tasks
     taskManager.addTask("Brush", TaskFrequency::DAILY);
     taskManager.addTask("Shave", TaskFrequency::EVERY_2_DAYS);
