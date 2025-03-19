@@ -48,16 +48,10 @@ void DisplayManager::drawTask(const Task& task, uint8_t yPos, bool isSelected) {
     // Draw bullet point with correct vertical position
     setCursor(BULLET_X, yPos);
     if (task.completed) {
-        print("-");  // Changed from space to dash for completed tasks
-        Serial.print("Drawing dash at (");
+        print("  ");  // Two spaces for completed tasks (same width as asterisk)
     } else {
-        print("*");  // Changed from bullet to asterisk for incomplete tasks
-        Serial.print("Drawing asterisk at (");
+        print("*");   // Asterisk for incomplete tasks
     }
-    Serial.print(BULLET_X);
-    Serial.print(", ");
-    Serial.print(yPos);
-    Serial.println(")");
     
     // Draw task name
     setCursor(TEXT_X, yPos);

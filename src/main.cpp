@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "DisplayManager.h"
 #include "TaskManager.h"
+#include "InputHandler.h"
 
 // Pin definitions
 const uint8_t JOYSTICK_X_PIN = GPIO_NUM_0;
@@ -27,6 +28,7 @@ bool wasInToggleThreshold = false;
 // Create instances
 DisplayManager display;
 TaskManager taskManager;
+InputHandler inputHandler(JOYSTICK_X_PIN, JOYSTICK_Y_PIN, JOYSTICK_BUTTON_PIN);
 
 // Map analog value to -100 to 100 range
 int8_t mapJoystickValue(int rawValue) {
@@ -53,102 +55,63 @@ void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
     
-    // Configure pins
-    pinMode(JOYSTICK_X_PIN, INPUT);
-    pinMode(JOYSTICK_Y_PIN, INPUT);
-    pinMode(JOYSTICK_BUTTON_PIN, INPUT_PULLUP);
+    // Configure LED pin
     pinMode(LED_PIN, OUTPUT);
-    
-    // Initialize LED to off state
     digitalWrite(LED_PIN, HIGH);  // Active LOW
+    
+    // Initialize input handler
+    inputHandler.begin();
     
     // Initialize display
     display.begin();
-    
-    // Set to horizontal orientation (optional since it's default)
     display.setOrientation(OLEDScreen::Orientation::VERTICAL);
     
     // Add some sample tasks
-    taskManager.addTask("Brush", TaskFrequency::DAILY);
+    taskManager.addTask("Brush Teeth", TaskFrequency::DAILY);
     taskManager.addTask("Shave", TaskFrequency::EVERY_2_DAYS);
     taskManager.addTask("Exercise", TaskFrequency::DAILY);
     taskManager.addTask("Floss", TaskFrequency::DAILY);
     taskManager.addTask("Shower", TaskFrequency::DAILY);
-    
-    // Set all tasks as completed initially
-    Serial.println("Setting all tasks as completed:");
-    for (uint8_t i = 0; i < taskManager.getTaskCount(); i++) {
-        if (!taskManager.isTaskCompleted(i)) {
-            taskManager.toggleTask(i);
-        }
-    }
     
     // Initial display update
     display.displayTaskList(taskManager);
 }
 
 void loop() {
-    // Read joystick values and map to -100 to 100 range
-    int8_t xValue = mapJoystickValue(analogRead(JOYSTICK_X_PIN));
-    int8_t yValue = mapJoystickValue(analogRead(JOYSTICK_Y_PIN));
-    bool buttonState = !digitalRead(JOYSTICK_BUTTON_PIN);
+    // Update input handler
+    inputHandler.update();
     
-    // Update LED based on button state
-    digitalWrite(LED_PIN, !buttonState);  // Active LOW
+    // Handle LED state based on current button state
+    digitalWrite(LED_PIN, !inputHandler.getButtonState());  // Active LOW
     
-    // Handle button press with debouncing
-    if (buttonState != lastButtonState) {
-        lastDebounceTime = millis();
+    bool needsDisplayUpdate = false;
+    
+    // Handle vertical movement
+    switch (inputHandler.getVerticalMovement()) {
+        case InputHandler::Movement::UP:
+            taskManager.moveSelection(-1);
+            needsDisplayUpdate = true;
+            break;
+        case InputHandler::Movement::DOWN:
+            taskManager.moveSelection(1);
+            needsDisplayUpdate = true;
+            break;
+        default:
+            break;
     }
     
-    if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
-        if (buttonState && !lastButtonState) {
-            // Button press detected - toggle current task
-            taskManager.toggleTask(taskManager.getSelectedTask());
-            display.displayTaskList(taskManager);
-        }
+    // Handle toggle requests (from either button or joystick)
+    if (inputHandler.getToggleRequested() || inputHandler.getButtonPressed()) {
+        Serial.print("Toggling task ");
+        Serial.println(taskManager.getSelectedTask());
+        taskManager.toggleTask(taskManager.getSelectedTask());
+        needsDisplayUpdate = true;
     }
     
-    // Handle joystick movement - Event-based navigation
-    bool inNavigationThreshold = exceedsNavigationThreshold(yValue);
-    bool inToggleThreshold = exceedsToggleThreshold(xValue);
-    
-    // Navigation event detection
-    if (inNavigationThreshold && !wasInNavigationThreshold) {
-        // Just entered threshold, do nothing
-    } else if (!inNavigationThreshold && wasInNavigationThreshold) {
-        // Left threshold, check direction and move
-        if (lastYValue > 0) {
-            taskManager.moveSelection(-1);  // Move up
-        } else if (lastYValue < 0) {
-            taskManager.moveSelection(1);   // Move down
-        }
+    // Update display if needed
+    if (needsDisplayUpdate) {
         display.displayTaskList(taskManager);
     }
-    
-    // Toggle event detection
-    if (inToggleThreshold && !wasInToggleThreshold) {
-        // Just entered threshold, do nothing
-        Serial.println("Entered toggle threshold");
-    } else if (!inToggleThreshold && wasInToggleThreshold) {
-        // Left threshold, check direction and toggle
-        Serial.print("Left toggle threshold, lastXValue = ");
-        Serial.println(lastXValue);
-        // Toggle on either left or right movement
-        if (abs(lastXValue) > TOGGLE_THRESHOLD) {
-            Serial.print("Toggling task ");
-            Serial.println(taskManager.getSelectedTask());
-            taskManager.toggleTask(taskManager.getSelectedTask());
-            display.displayTaskList(taskManager);
-        }
-    }
-    
-    // Update state tracking
-    wasInNavigationThreshold = inNavigationThreshold;
-    wasInToggleThreshold = inToggleThreshold;
-    lastXValue = xValue;
-    lastYValue = yValue;
-    lastButtonState = buttonState;
     
     // Small delay to prevent too frequent updates
     delay(50);
