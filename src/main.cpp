@@ -66,12 +66,21 @@ void setup() {
     display.begin();
     display.setOrientation(OLEDScreen::Orientation::VERTICAL);
     
-    // Add some sample tasks
-    taskManager.addTask("Brush Teeth", TaskFrequency::DAILY);
-    taskManager.addTask("Shave", TaskFrequency::EVERY_2_DAYS);
-    taskManager.addTask("Exercise", TaskFrequency::DAILY);
-    taskManager.addTask("Floss", TaskFrequency::DAILY);
-    taskManager.addTask("Shower", TaskFrequency::DAILY);
+    // Try to load tasks from EEPROM
+    Serial.println("Loading tasks from EEPROM...");
+    if (taskManager.getTaskCount() == 0) {
+        // No tasks loaded from EEPROM, add default tasks
+        Serial.println("No tasks found in EEPROM, adding defaults:");
+        taskManager.addTask("Brush Teeth", TaskFrequency::DAILY);
+        taskManager.addTask("Shave", TaskFrequency::EVERY_2_DAYS);
+        taskManager.addTask("Exercise", TaskFrequency::DAILY);
+        taskManager.addTask("Floss", TaskFrequency::DAILY);
+        taskManager.addTask("Shower", TaskFrequency::DAILY);
+    } else {
+        Serial.print("Loaded ");
+        Serial.print(taskManager.getTaskCount());
+        Serial.println(" tasks from EEPROM");
+    }
     
     // Initial display update
     display.displayTaskList(taskManager);
