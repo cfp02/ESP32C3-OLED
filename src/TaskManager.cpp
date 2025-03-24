@@ -1,8 +1,6 @@
 #include "TaskManager.h"
 
 TaskManager::TaskManager() : selectedTask(0) {
-    EEPROM.begin(EEPROM_SIZE);
-    loadFromEEPROM();
 }
 
 bool TaskManager::addTask(const String& name, TaskFrequency frequency, unsigned long customInterval) {
@@ -16,7 +14,6 @@ bool TaskManager::addTask(const String& name, TaskFrequency frequency, unsigned 
     newTask.customInterval = customInterval;
     
     tasks.push_back(newTask);
-    saveToEEPROM();
     return true;
 }
 
@@ -28,27 +25,17 @@ bool TaskManager::removeTask(uint8_t index) {
         selectedTask = tasks.empty() ? 0 : tasks.size() - 1;
     }
     
-    saveToEEPROM();
     return true;
 }
 
 bool TaskManager::toggleTask(uint8_t index) {
-    if (index >= tasks.size()) {
-        Serial.println("Toggle failed: Invalid index");
-        return false;
-    }
+    if (index >= tasks.size()) return false;
     
     tasks[index].completed = !tasks[index].completed;
-    Serial.print("Task ");
-    Serial.print(index);
-    Serial.print(" toggled to: ");
-    Serial.println(tasks[index].completed ? "completed" : "incomplete");
-    
     if (tasks[index].completed) {
         tasks[index].lastCompleted = millis();
     }
     
-    saveToEEPROM();
     return true;
 }
 
@@ -122,101 +109,4 @@ void TaskManager::moveSelection(int8_t direction) {
     }
     
     selectedTask = newIndex;
-}
-
-bool TaskManager::saveToEEPROM() {
-    // Write number of tasks
-    EEPROM.write(0, tasks.size());
-    
-    // Write each task
-    for (uint8_t i = 0; i < tasks.size(); i++) {
-        if (!writeTaskToEEPROM(i, calculateTaskAddress(i))) {
-            return false;
-        }
-    }
-    
-    EEPROM.commit();
-    return true;
-}
-
-bool TaskManager::loadFromEEPROM() {
-    tasks.clear();
-    
-    // Read number of tasks
-    uint8_t taskCount = EEPROM.read(0);
-    if (taskCount > MAX_TASKS) return false;
-    
-    // Read each task
-    for (uint8_t i = 0; i < taskCount; i++) {
-        if (!readTaskFromEEPROM(i, calculateTaskAddress(i))) {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-uint16_t TaskManager::calculateTaskAddress(uint8_t index) {
-    // First byte is task count, then each task starts at 1 + (index * sizeof(Task))
-    return 1 + (index * sizeof(Task));
-}
-
-bool TaskManager::writeTaskToEEPROM(uint8_t index, uint16_t address) {
-    const Task& task = tasks[index];
-    
-    // Write task name length
-    uint8_t nameLength = task.name.length();
-    EEPROM.write(address++, nameLength);
-    
-    // Write task name
-    for (uint8_t i = 0; i < nameLength; i++) {
-        EEPROM.write(address++, task.name[i]);
-    }
-    
-    // Write task data
-    EEPROM.write(address++, task.completed);
-    EEPROM.write(address++, static_cast<uint8_t>(task.frequency));
-    
-    // Write timestamps
-    for (uint8_t i = 0; i < 4; i++) {
-        EEPROM.write(address++, (task.lastCompleted >> (i * 8)) & 0xFF);
-    }
-    for (uint8_t i = 0; i < 4; i++) {
-        EEPROM.write(address++, (task.customInterval >> (i * 8)) & 0xFF);
-    }
-    
-    return true;
-}
-
-bool TaskManager::readTaskFromEEPROM(uint8_t index, uint16_t address) {
-    Task task;
-    
-    // Read task name length
-    uint8_t nameLength = EEPROM.read(address++);
-    
-    // Read task name
-    char nameBuffer[32];  // Maximum name length
-    for (uint8_t i = 0; i < nameLength && i < sizeof(nameBuffer) - 1; i++) {
-        nameBuffer[i] = EEPROM.read(address++);
-    }
-    nameBuffer[nameLength] = '\0';
-    task.name = String(nameBuffer);
-    
-    // Read task data
-    task.completed = EEPROM.read(address++);
-    task.frequency = static_cast<TaskFrequency>(EEPROM.read(address++));
-    
-    // Read timestamps
-    task.lastCompleted = 0;
-    for (uint8_t i = 0; i < 4; i++) {
-        task.lastCompleted |= (static_cast<unsigned long>(EEPROM.read(address++)) << (i * 8));
-    }
-    
-    task.customInterval = 0;
-    for (uint8_t i = 0; i < 4; i++) {
-        task.customInterval |= (static_cast<unsigned long>(EEPROM.read(address++)) << (i * 8));
-    }
-    
-    tasks.push_back(task);
-    return true;
 } 

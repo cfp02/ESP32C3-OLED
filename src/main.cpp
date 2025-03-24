@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include "DisplayManager.h"
-#include "TaskManager.h"
+#include "EncoderManager.h"
 #include "InputHandler.h"
 
 // Pin definitions
@@ -9,51 +9,47 @@ const uint8_t JOYSTICK_Y_PIN = GPIO_NUM_1;
 const uint8_t JOYSTICK_BUTTON_PIN = GPIO_NUM_2;
 const uint8_t LED_PIN = GPIO_NUM_8;
 
-// Joystick thresholds (in percentage)
-const int8_t DEADBAND_THRESHOLD = 20;    // 20% deadband in the middle
-const int8_t TOGGLE_THRESHOLD = 50;      // 50% threshold for toggle
-const int8_t NAVIGATION_THRESHOLD = 30;  // 30% threshold for navigation
-
-// Joystick state
-int8_t lastXValue = 0;
-int8_t lastYValue = 0;
-bool lastButtonState = false;
-unsigned long lastDebounceTime = 0;
-const unsigned long DEBOUNCE_DELAY = 50;
-
-// Navigation state
-bool wasInNavigationThreshold = false;
-bool wasInToggleThreshold = false;
+// Update intervals
+const unsigned long DISPLAY_UPDATE_INTERVAL = 50;  // 50ms = 20Hz update rate
+unsigned long lastDisplayUpdate = 0;
 
 // Create instances
 DisplayManager display;
-TaskManager taskManager;
+EncoderManager encoder;
 InputHandler inputHandler(JOYSTICK_X_PIN, JOYSTICK_Y_PIN, JOYSTICK_BUTTON_PIN);
 
-// Map analog value to -100 to 100 range
-int8_t mapJoystickValue(int rawValue) {
-    // Map from 0-4095 to -100 to 100
-    return map(rawValue, 0, 4095, -100, 100);
-}
-
-// Check if value is within deadband
-bool isInDeadband(int8_t value) {
-    return abs(value) < DEADBAND_THRESHOLD;
-}
-
-// Check if value exceeds toggle threshold
-bool exceedsToggleThreshold(int8_t value) {
-    return abs(value) > TOGGLE_THRESHOLD;
-}
-
-// Check if value exceeds navigation threshold
-bool exceedsNavigationThreshold(int8_t value) {
-    return abs(value) > NAVIGATION_THRESHOLD;
+void updateEncoderDisplay() {
+    display.clear();
+    
+    // Display encoder values
+    float degrees = encoder.getDegrees();
+    word raw = encoder.getRawAngle();
+    
+    // Show angle in degrees
+    display.setCursor(0, 10);
+    display.printf("Angle: %.1f°", degrees);
+    
+    // Show raw value
+    display.setCursor(0, 25);
+    display.printf("Raw: %d", raw);
+    
+    // Show magnet status
+    display.setCursor(0, 40);
+    if (!encoder.isMagnetDetected()) {
+        display.print("No Magnet!");
+    } else {
+        int magnitude = encoder.getMagnitude();
+        display.printf("Mag: %d", magnitude);
+    }
+    
+    display.update();
 }
 
 void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
+    delay(1000);  // Give serial time to initialize
+    Serial.println("\nStarting AS5600 Encoder Test");
     
     // Configure LED pin
     pinMode(LED_PIN, OUTPUT);
@@ -63,27 +59,36 @@ void setup() {
     inputHandler.begin();
     
     // Initialize display
+    Serial.println("Initializing display...");
     display.begin();
-    display.setOrientation(OLEDScreen::Orientation::VERTICAL);
+    display.setOrientation(OLEDScreen::Orientation::HORIZONTAL);
     
-    // Try to load tasks from EEPROM
-    Serial.println("Loading tasks from EEPROM...");
-    if (taskManager.getTaskCount() == 0) {
-        // No tasks loaded from EEPROM, add default tasks
-        Serial.println("No tasks found in EEPROM, adding defaults:");
-        taskManager.addTask("Brush Teeth", TaskFrequency::DAILY);
-        taskManager.addTask("Shave", TaskFrequency::EVERY_2_DAYS);
-        taskManager.addTask("Exercise", TaskFrequency::DAILY);
-        taskManager.addTask("Floss", TaskFrequency::DAILY);
-        taskManager.addTask("Shower", TaskFrequency::DAILY);
-    } else {
-        Serial.print("Loaded ");
-        Serial.print(taskManager.getTaskCount());
-        Serial.println(" tasks from EEPROM");
+    // Show connecting message
+    display.clear();
+    display.setCursor(0, 25);
+    display.print("Connecting to");
+    display.setCursor(0, 35);
+    display.print("AS5600...");
+    display.update();
+    delay(1000);  // Show message for 1 second
+    
+    // Initialize encoder
+    Serial.println("Initializing AS5600 encoder...");
+    if (!encoder.begin()) {
+        Serial.println("Failed to detect AS5600 encoder!");
+        display.clear();
+        display.setCursor(0, 25);
+        display.print("No Magnet!");
+        display.update();
+        while(1) {
+            digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+            delay(500);  // Blink LED to indicate error
+        }
     }
+    Serial.println("AS5600 encoder initialized successfully");
     
     // Initial display update
-    display.displayTaskList(taskManager);
+    updateEncoderDisplay();
 }
 
 void loop() {
@@ -93,36 +98,11 @@ void loop() {
     // Handle LED state based on current button state
     digitalWrite(LED_PIN, !inputHandler.getButtonState());  // Active LOW
     
-    bool needsDisplayUpdate = false;
-    
-    // Handle vertical movement
-    switch (inputHandler.getVerticalMovement()) {
-        case InputHandler::Movement::UP:
-            taskManager.moveSelection(-1);
-            needsDisplayUpdate = true;
-            break;
-        case InputHandler::Movement::DOWN:
-            taskManager.moveSelection(1);
-            needsDisplayUpdate = true;
-            break;
-        default:
-            break;
+    // Update display at regular intervals
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+        lastDisplayUpdate = currentMillis;
+        updateEncoderDisplay();
     }
-    
-    // Handle toggle requests (from either button or joystick)
-    if (inputHandler.getToggleRequested() || inputHandler.getButtonPressed()) {
-        Serial.print("Toggling task ");
-        Serial.println(taskManager.getSelectedTask());
-        taskManager.toggleTask(taskManager.getSelectedTask());
-        needsDisplayUpdate = true;
-    }
-    
-    // Update display if needed
-    if (needsDisplayUpdate) {
-        display.displayTaskList(taskManager);
-    }
-    
-    // Small delay to prevent too frequent updates
-    delay(50);
 }
  
