@@ -1,6 +1,6 @@
 #include "OLEDScreen.h"
 
-OLEDScreen::OLEDScreen() : u8g2(U8G2_R2, U8X8_PIN_NONE, 6, 5) {
+OLEDScreen::OLEDScreen() : u8g2(U8G2_R0, U8X8_PIN_NONE, 6, 5) {
     horizontalScrollEnabled = false;
     scrollX = 0;
     for (int i = 0; i < MAX_SCROLL_LINES; i++) {

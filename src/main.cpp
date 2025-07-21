@@ -2,10 +2,30 @@
 #include "OLEDScreen.h"
 #include "BLEHandler.h"
 
-#define BUTTON_PIN GPIO_NUM_0
-#define POT_X_PIN GPIO_NUM_2
-#define POT_Y_PIN GPIO_NUM_1
+// Left joystick pins
+#define JOYSTICK1_X_PIN GPIO_NUM_4  // Left joystick X axis
+#define JOYSTICK1_Y_PIN GPIO_NUM_3  // Left joystick Y axis
+#define JOYSTICK1_BUTTON_PIN GPIO_NUM_10  // Left joystick button (changed from GPIO5)
+
+// Right joystick pins
+#define JOYSTICK2_X_PIN GPIO_NUM_1  // Right joystick X axis
+#define JOYSTICK2_Y_PIN GPIO_NUM_0  // Right joystick Y axis
+#define JOYSTICK2_BUTTON_PIN GPIO_NUM_2  // Right joystick button
+
+// LED pin
 #define LED_PIN GPIO_NUM_8
+
+// Axis mapping configuration
+// Choose which axes to use for motor control
+// Options: JOYSTICK1_X, JOYSTICK1_Y, JOYSTICK2_X, JOYSTICK2_Y
+#define RIGHT_MOTOR_AXIS JOYSTICK1_Y  // Axis for right motor (forward/backward)
+#define LEFT_MOTOR_AXIS JOYSTICK1_X   // Axis for left motor (steering)
+
+// Axis constants for mapping
+#define JOYSTICK1_X 1
+#define JOYSTICK1_Y 2
+#define JOYSTICK2_X 3
+#define JOYSTICK2_Y 4
 
 // Long press duration (5 seconds)
 #define LONG_PRESS_DURATION 5000
@@ -16,12 +36,22 @@ OLEDScreen screen;
 // Create BLE handler instance
 BLEHandler bleHandler;
 
-// Potentiometer values
-int potX = 0;
-int potY = 0;
-int potX_pct = 0;
-int potY_pct = 0;
-int buttonState = 0;
+// Joystick values
+int joystick1X = 0;
+int joystick1Y = 0;
+int joystick1X_pct = 0;
+int joystick1Y_pct = 0;
+int joystick1ButtonState = 0;
+
+int joystick2X = 0;
+int joystick2Y = 0;
+int joystick2X_pct = 0;
+int joystick2Y_pct = 0;
+int joystick2ButtonState = 0;
+
+        // Motor power values (mapped from selected axes)
+        int leftMotorPower = 0;
+        int rightMotorPower = 0;
 
 // Button press tracking
 unsigned long buttonPressStart = 0;
@@ -43,50 +73,53 @@ void setup() {
     Serial.println("ESP32C3 BLE Joystick Controller Starting...");
     
     // Initialize OLED screen
+    Serial.println("Starting OLED initialization...");
     screen.begin();
+    Serial.println("OLED begin() completed");
     screen.setFont(u8g2_font_6x10_tr);
+    Serial.println("OLED font set");
     Serial.println("OLED Screen initialized");
     
     // Initialize BLE
     bleHandler.begin();
     Serial.println("BLE initialized as ble-joystick");
     
-    // Set up analog pins
-    pinMode(POT_X_PIN, INPUT);  // X potentiometer
-    pinMode(POT_Y_PIN, INPUT);  // Y potentiometer
-    Serial.println("Analog pins configured");
+    // Set up joystick 1 pins
+    pinMode(JOYSTICK1_X_PIN, INPUT);  // Joystick 1 X axis
+    pinMode(JOYSTICK1_Y_PIN, INPUT);  // Joystick 1 Y axis
+    pinMode(JOYSTICK1_BUTTON_PIN, INPUT_PULLUP);  // Joystick 1 button
+    Serial.println("Joystick 1 pins configured");
     
-    // Set up switch pin with internal pull-up
-    pinMode(BUTTON_PIN, INPUT_PULLUP);  // Switch with internal pull-up
-    Serial.println("Button pin configured");
+    // Set up joystick 2 pins
+    pinMode(JOYSTICK2_X_PIN, INPUT);  // Joystick 2 X axis
+    pinMode(JOYSTICK2_Y_PIN, INPUT);  // Joystick 2 Y axis
+    pinMode(JOYSTICK2_BUTTON_PIN, INPUT_PULLUP);  // Joystick 2 button
+    Serial.println("Joystick 2 pins configured");
     
     // Set up LED pin
     pinMode(LED_PIN, OUTPUT);  // LED on IO8
     digitalWrite(LED_PIN, HIGH);  // Start with LED off
     Serial.println("LED pin configured");
 
-    const char* lineTexts[] = {
-    "Some text that can scroll",
-    "Some other text that can scroll",
-    "Line three scrolls",
-    "Line four scrolls"
-    };
 
-    screen.enableHorizontalScroll(true);
     Serial.println("Setup complete - starting BLE advertising");
     bleHandler.startAdvertising();
 }
 
-void handleButtonPress() {
-    bool currentButtonState = !digitalRead(BUTTON_PIN); // Inverted due to pull-up
+void handleButtonPresses() {
+    // Read joystick 1 button
+    joystick1ButtonState = !digitalRead(JOYSTICK1_BUTTON_PIN); // Inverted due to pull-up
     
-    // Button press detection
-    if (currentButtonState && !buttonPressed) {
+    // Read joystick 2 button
+    joystick2ButtonState = !digitalRead(JOYSTICK2_BUTTON_PIN); // Inverted due to pull-up
+    
+    // Long press detection on joystick 1 button (5 seconds)
+    if (joystick1ButtonState && !buttonPressed) {
         buttonPressed = true;
         buttonPressStart = millis();
         longPressTriggered = false;
     }
-    else if (!currentButtonState && buttonPressed) {
+    else if (!joystick1ButtonState && buttonPressed) {
         buttonPressed = false;
         buttonPressStart = 0;
     }
@@ -109,37 +142,62 @@ void handleButtonPress() {
             delay(100);
         }
     }
-    
-    buttonState = currentButtonState;
 }
 
 void loop() {
     unsigned long currentTime = millis();
     
     // Handle button press detection
-    handleButtonPress();
+    handleButtonPresses();
     
     // Update BLE handler
     bleHandler.update();
     
     // Check if it's time to update
     if (currentTime - lastUpdate >= UPDATE_INTERVAL) {
-        // Read potentiometer values
-        potX = analogRead(POT_X_PIN);
-        potY = analogRead(POT_Y_PIN);
-        potX_pct = map(potX, 0, 4095, -100, 100);
-        potY_pct = map(potY, 0, 4095, -100, 100);
+        // Read joystick 1 values
+        joystick1X = analogRead(JOYSTICK1_X_PIN);
+        joystick1Y = analogRead(JOYSTICK1_Y_PIN);
+        joystick1X_pct = map(joystick1X, 0, 4095, -100, 100);
+        joystick1Y_pct = map(joystick1Y, 0, 4095, -100, 100);
         
-        // Send joystick data to car if connected
+        // Read joystick 2 values
+        joystick2X = analogRead(JOYSTICK2_X_PIN);
+        joystick2Y = analogRead(JOYSTICK2_Y_PIN);
+        joystick2X_pct = map(joystick2X, 0, 4095, -100, 100);
+        joystick2Y_pct = map(joystick2Y, 0, 4095, -100, 100);
+        
+        // Map selected axes to motor powers
+        if (RIGHT_MOTOR_AXIS == JOYSTICK1_Y) {
+            rightMotorPower = joystick1Y_pct;
+        } else if (RIGHT_MOTOR_AXIS == JOYSTICK1_X) {
+            rightMotorPower = joystick1X_pct;
+        } else if (RIGHT_MOTOR_AXIS == JOYSTICK2_Y) {
+            rightMotorPower = joystick2Y_pct;
+        } else if (RIGHT_MOTOR_AXIS == JOYSTICK2_X) {
+            rightMotorPower = joystick2X_pct;
+        }
+        
+        if (LEFT_MOTOR_AXIS == JOYSTICK1_Y) {
+            leftMotorPower = joystick1Y_pct;
+        } else if (LEFT_MOTOR_AXIS == JOYSTICK1_X) {
+            leftMotorPower = joystick1X_pct;
+        } else if (LEFT_MOTOR_AXIS == JOYSTICK2_Y) {
+            leftMotorPower = joystick2Y_pct;
+        } else if (LEFT_MOTOR_AXIS == JOYSTICK2_X) {
+            leftMotorPower = joystick2X_pct;
+        }
+        
+        // Send motor power data if connected
         if (bleHandler.isConnected()) {
-            bleHandler.sendJoystickData(potX_pct, potY_pct);
+            bleHandler.sendJoystickData(leftMotorPower, rightMotorPower);
         }
         
         // Update LED based on button state and BLE connection
         if (bleHandler.isConnected()) {
             digitalWrite(LED_PIN, LOW); // Solid LED when connected
         } else {
-            digitalWrite(LED_PIN, !buttonState);
+            digitalWrite(LED_PIN, !joystick1ButtonState);
         }
         
         // Print BLE status to Serial every few seconds
@@ -164,31 +222,23 @@ void loop() {
         // Update display
         screen.clear();
         
-        // Format and display X value
-        snprintf(displayBuffer, sizeof(displayBuffer), "X: %d", potX_pct);
-        screen.setCursor(0, 17);
-        screen.print(displayBuffer);
+        // Create strings beforehand with fixed-width formatting
+        char leftString[20];
+        char rightString[20];
         
-        // Format and display Y value
-        snprintf(displayBuffer, sizeof(displayBuffer), "Y: %d", potY_pct);
-        screen.setCursor(0, 27);
-        screen.print(displayBuffer);
+        snprintf(leftString, sizeof(leftString), "%4d:%4d %s", joystick1X_pct, joystick1Y_pct, joystick1ButtonState ? "D" : "U");
+        snprintf(rightString, sizeof(rightString), "%4d:%4d %s", joystick2X_pct, joystick2Y_pct, joystick2ButtonState ? "D" : "U");
         
-        // Format and display button state
-        snprintf(displayBuffer, sizeof(displayBuffer), "Btn: %s", buttonState ? "Down" : "Up");
-        screen.setCursor(0, 37);
-        screen.print(displayBuffer);
+        // Debug: print to serial what we're trying to display
+        Serial.printf("Left: '%s', Right: '%s'\n", leftString, rightString);
         
-        // Display BLE status
-        if (bleHandler.isAdvertising()) {
-            snprintf(displayBuffer, sizeof(displayBuffer), "BLE: Advertising");
-        } else if (bleHandler.isConnected()) {
-            snprintf(displayBuffer, sizeof(displayBuffer), "BLE: Connected");
-        } else {
-            snprintf(displayBuffer, sizeof(displayBuffer), "BLE: Disconnected");
-        }
-        screen.setCursor(0, 47);
-        screen.print(displayBuffer);
+        // Display left joystick (top row): "x:y btn"
+        screen.setCursor(0, 15);
+        screen.print(leftString);
+        
+        // Display right joystick (bottom row): "x:y btn"
+        screen.setCursor(0, 30);
+        screen.print(rightString);
         
         screen.update();
         
