@@ -68,6 +68,7 @@ bool selectShown = false;
 bool buttonReleasedSinceEntry = false;
 bool justEnteredViaLongPress = false;
 bool justEnteredViaMacSelect = false;
+bool justExitedFromMenu = false;
 
 uint8_t PEER_MAC[6] = {0};
 int selectIdx = 0;
@@ -290,6 +291,7 @@ void loop() {
       buttonReleasedSinceEntry = false;
       justEnteredViaLongPress = false;
       justEnteredViaMacSelect = false;
+      justExitedFromMenu = false;
       Serial.println("Reset all flags to false (from RUN state)");
     } else {
       Serial.println("Already in menu/screen - keeping existing flags");
@@ -312,8 +314,8 @@ void loop() {
       justEnteredViaMacSelect = true;
       Serial.println("Set justEnteredViaMacSelect = true");
     }
-    // 5s -> enter settings (only from RUN state)
-    else if (held >= LONG_PRESS_MENU_MS && ui == RUN) {
+    // 5s -> enter settings (only from RUN state, and not if we just exited)
+    else if (held >= LONG_PRESS_MENU_MS && ui == RUN && !justExitedFromMenu) {
       Serial.println("=== 5s HOLD - ENTERING SETTINGS ===");
       Serial.printf("Held for: %u ms, UI was: RUN\n", held);
       ui = MENU;
@@ -322,6 +324,21 @@ void loop() {
       buttonReleasedSinceEntry = false;
       justEnteredViaLongPress = true;
       Serial.println("Set justEnteredViaLongPress = true");
+    }
+    // 5s -> exit settings (only from MENU state)
+    else if (held >= LONG_PRESS_MENU_MS && ui == MENU && buttonReleasedSinceEntry) {
+      Serial.println("=== 5s HOLD - EXITING SETTINGS ===");
+      Serial.printf("Held for: %u ms, UI was: MENU\n", held);
+      ui = RUN;
+      menuShown = false;
+      justExitedFromMenu = true;
+      screen.clear();
+      screen.setCursor(0, 14); screen.print("Speed: 0");
+      screen.setCursor(0, 26); screen.print("Steer: 0");
+      const char* modeStr = (optSpeedMode==0?"High":optSpeedMode==1?"Med":"Low");
+      screen.setCursor(0, 38); screen.print("Mode: "); screen.print(modeStr);
+      screen.update();
+      Serial.println("Exited to RUN screen, set justExitedFromMenu = true");
     }
   }
 
@@ -345,16 +362,6 @@ void loop() {
         Serial.println("ACTION: Just entered via long press - doing nothing, clearing flag");
         justEnteredViaLongPress = false;
         buttonReleasedSinceEntry = true;
-      } else if (held >= LONG_PRESS_MENU_MS && buttonReleasedSinceEntry) {
-        Serial.println("ACTION: Long press in settings - EXITING TO RUN");
-        ui = RUN;
-        menuShown = false;
-        screen.clear();
-        screen.setCursor(0, 14); screen.print("Speed: 0");
-        screen.setCursor(0, 26); screen.print("Steer: 0");
-        const char* modeStr = (optSpeedMode==0?"High":optSpeedMode==1?"Med":"Low");
-        screen.setCursor(0, 38); screen.print("Mode: "); screen.print(modeStr);
-        screen.update();
       } else {
         Serial.printf("ACTION: Short click in settings - TOGGLING setting %d\n", menuIndex);
         menuToggle(menuIndex);
@@ -383,6 +390,12 @@ void loop() {
     }
     else {
       Serial.println("No action taken - not in MENU or SELECT mode");
+    }
+    
+    // Clear the exit flag on any button release
+    if (justExitedFromMenu) {
+      Serial.println("Clearing justExitedFromMenu flag on release");
+      justExitedFromMenu = false;
     }
   }
   btnPrev = btn;
@@ -415,8 +428,8 @@ void loop() {
   if (optLog) { xPct = curveLog(xPct); yPct = curveLog(yPct); }
 
   float limit = SPEED_LIMITS[optSpeedMode];
-  xPct = clampf(xPct, -limit, limit);
-  yPct = clampf(yPct, -limit, limit);
+  xPct = xPct * (limit / 100.0f);
+  yPct = yPct * (limit / 100.0f);
 
   int speed = (int)roundf(clampf(-xPct, -100.0f, 100.0f));
   int steer = (int)roundf(clampf(+yPct, -100.0f, 100.0f));
