@@ -233,7 +233,6 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
 
-  Serial.begin(115200);
   screen.begin();
   screen.setFont(u8g2_font_6x10_tr);
 
@@ -277,11 +276,6 @@ void loop() {
 
   // ---------- Button press start ----------
   if (btn && !btnPrev) {
-    Serial.println("=== BUTTON PRESS START ===");
-    Serial.printf("UI State: %s, menuShown: %s, selectShown: %s\n", 
-                  (ui == RUN) ? "RUN" : (ui == MENU) ? "MENU" : "SELECT",
-                  menuShown ? "true" : "false",
-                  selectShown ? "true" : "false");
     tBtnDown = now;
     
     // Only reset flags if we're not already in a menu/screen
@@ -292,9 +286,6 @@ void loop() {
       justEnteredViaLongPress = false;
       justEnteredViaMacSelect = false;
       justExitedFromMenu = false;
-      Serial.println("Reset all flags to false (from RUN state)");
-    } else {
-      Serial.println("Already in menu/screen - keeping existing flags");
     }
   }
 
@@ -304,31 +295,23 @@ void loop() {
 
     // 8s -> MAC select (from any state)
     if (held >= LONG_PRESS_SELECT_MS) {
-      Serial.println("=== 8s HOLD - ENTERING MAC SELECT ===");
-      Serial.printf("Held for: %u ms\n", held);
       ui = SELECT;
       selectIdx = 0;
       drawSelect();
       selectShown = true;
       buttonReleasedSinceEntry = false;
       justEnteredViaMacSelect = true;
-      Serial.println("Set justEnteredViaMacSelect = true");
     }
     // 5s -> enter settings (only from RUN state, and not if we just exited)
     else if (held >= LONG_PRESS_MENU_MS && ui == RUN && !justExitedFromMenu) {
-      Serial.println("=== 5s HOLD - ENTERING SETTINGS ===");
-      Serial.printf("Held for: %u ms, UI was: RUN\n", held);
       ui = MENU;
       drawMenu();
       menuShown = true;
       buttonReleasedSinceEntry = false;
       justEnteredViaLongPress = true;
-      Serial.println("Set justEnteredViaLongPress = true");
     }
     // 5s -> exit settings (only from MENU state)
     else if (held >= LONG_PRESS_MENU_MS && ui == MENU && buttonReleasedSinceEntry) {
-      Serial.println("=== 5s HOLD - EXITING SETTINGS ===");
-      Serial.printf("Held for: %u ms, UI was: MENU\n", held);
       ui = RUN;
       menuShown = false;
       justExitedFromMenu = true;
@@ -338,32 +321,18 @@ void loop() {
       const char* modeStr = (optSpeedMode==0?"High":optSpeedMode==1?"Med":"Low");
       screen.setCursor(0, 38); screen.print("Mode: "); screen.print(modeStr);
       screen.update();
-      Serial.println("Exited to RUN screen, set justExitedFromMenu = true");
     }
   }
 
   // ---------- On release ----------
   if (!btn && btnPrev) {
     unsigned held = now - tBtnDown;
-    Serial.println("=== BUTTON RELEASE ===");
-    Serial.printf("Held for: %u ms\n", held);
-    Serial.printf("UI: %s, menuShown: %s, selectShown: %s\n", 
-                  (ui == RUN) ? "RUN" : (ui == MENU) ? "MENU" : "SELECT",
-                  menuShown ? "true" : "false",
-                  selectShown ? "true" : "false");
-    Serial.printf("Flags - justEnteredViaLongPress: %s, justEnteredViaMacSelect: %s, buttonReleasedSinceEntry: %s\n",
-                  justEnteredViaLongPress ? "true" : "false",
-                  justEnteredViaMacSelect ? "true" : "false", 
-                  buttonReleasedSinceEntry ? "true" : "false");
 
     if (ui == MENU && menuShown) {
-      Serial.println("In MENU mode");
       if (justEnteredViaLongPress && held >= LONG_PRESS_MENU_MS) {
-        Serial.println("ACTION: Just entered via long press - doing nothing, clearing flag");
         justEnteredViaLongPress = false;
         buttonReleasedSinceEntry = true;
       } else {
-        Serial.printf("ACTION: Short click in settings - TOGGLING setting %d\n", menuIndex);
         menuToggle(menuIndex);
         drawMenu();
         justEnteredViaLongPress = false; // Clear flag on any action
@@ -371,13 +340,10 @@ void loop() {
       buttonReleasedSinceEntry = true;
     }
     else if (ui == SELECT && selectShown) {
-      Serial.println("In SELECT mode");
       if (justEnteredViaMacSelect) {
-        Serial.println("ACTION: Just entered via MAC select - doing nothing, clearing flag");
         justEnteredViaMacSelect = false;
         buttonReleasedSinceEntry = true;
       } else {
-        Serial.printf("ACTION: Release in MAC selection - SAVING MAC %d and rebooting\n", selectIdx);
         memcpy(PEER_MAC, BOARDS[selectIdx].mac, 6);
         savePeerMacToNVS(PEER_MAC);
         screen.clear();
@@ -388,13 +354,9 @@ void loop() {
         ESP.restart();
       }
     }
-    else {
-      Serial.println("No action taken - not in MENU or SELECT mode");
-    }
     
     // Clear the exit flag on any button release
     if (justExitedFromMenu) {
-      Serial.println("Clearing justExitedFromMenu flag on release");
       justExitedFromMenu = false;
     }
   }
