@@ -15,7 +15,7 @@ static const BoardEntry BOARDS[] = {
 };
 static const size_t NUM_BOARDS = sizeof(BOARDS) / sizeof(BOARDS[0]);
 
-// ===================== Pin Definitions (ESP32-C3) =====================
+// ===================== Pins =====================
 #define BUTTON_PIN  GPIO_NUM_0
 #define POT_X_PIN   GPIO_NUM_2
 #define POT_Y_PIN   GPIO_NUM_1
@@ -32,7 +32,8 @@ struct __attribute__((packed)) ControlPacket {
 static uint16_t crc16_ccitt(const uint8_t* data, size_t len, uint16_t crc = 0xFFFF) {
   while (len--) {
     crc ^= ((uint16_t)*data++) << 8;
-    for (int i = 0; i < 8; i++) crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : (crc << 1);
+    for (int i = 0; i < 8; i++)
+      crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : (crc << 1);
   }
   return crc;
 }
@@ -49,6 +50,8 @@ int deadzone = 180;
 bool optInvSpeed = false;
 bool optInvSteer = false;
 bool optLog = true;
+int  optSpeedMode = 0; // 0=High, 1=Med, 2=Low
+const float SPEED_LIMITS[3] = {100.0f, 60.0f, 30.0f};
 
 uint8_t seq = 0;
 uint32_t tLastSend = 0, tLastOLED = 0;
@@ -62,12 +65,15 @@ const unsigned LONG_PRESS_SELECT_MS = 8000;
 
 bool menuShown = false;
 bool selectShown = false;
+bool buttonReleasedSinceEntry = false;
+bool justEnteredViaLongPress = false;
+bool justEnteredViaMacSelect = false;
 
 uint8_t PEER_MAC[6] = {0};
 int selectIdx = 0;
+bool peerAdded = false;
 
-static bool peerAdded = false;
-void onEspNowSent(const uint8_t*, esp_now_send_status_t) {}
+bool xMoved = false;
 
 // ===================== Helpers =====================
 static inline float clampf(float x, float a, float b) { return x < a ? a : (x > b ? b : x); }
@@ -89,7 +95,7 @@ static uint8_t flagsByte() {
   uint8_t f = 0;
   if (optInvSpeed) f |= 1 << 0;
   if (optInvSteer) f |= 1 << 1;
-  if (optLog) f |= 1 << 2;
+  if (optLog)      f |= 1 << 2;
   return f;
 }
 
@@ -97,7 +103,7 @@ static uint8_t flagsByte() {
 bool initEspNow() {
   WiFi.mode(WIFI_STA);
   if (esp_now_init() != ESP_OK) return false;
-  esp_now_register_send_cb(onEspNowSent);
+  esp_now_register_send_cb(nullptr);
   esp_now_peer_info_t peer{};
   memcpy(peer.peer_addr, PEER_MAC, 6);
   peer.channel = 0;
@@ -110,21 +116,22 @@ bool sendPacket(int speedPct, int steerPct) {
   ControlPacket p{};
   p.speed_pct = (int16_t)speedPct;
   p.steer_pct = (int16_t)steerPct;
-  p.flags = flagsByte();
-  p.seq = seq++;
-  p.crc = crc16_ccitt((const uint8_t*)&p, sizeof(p) - sizeof(p.crc));
+  p.flags     = flagsByte();
+  p.seq       = seq++;
+  p.crc       = crc16_ccitt((const uint8_t*)&p, sizeof(p) - sizeof(p.crc));
   return esp_now_send(PEER_MAC, (const uint8_t*)&p, sizeof(p)) == ESP_OK;
 }
 
 // ===================== Settings =====================
 void loadSettings() {
   prefs.begin("joy", true);
-  optInvSpeed = prefs.getBool("invSpd", false);
-  optInvSteer = prefs.getBool("invStr", false);
-  optLog = prefs.getBool("log", true);
-  centerX = prefs.getInt("cx", 2048);
-  centerY = prefs.getInt("cy", 2048);
-  deadzone = prefs.getInt("dz", 180);
+  optInvSpeed  = prefs.getBool("invSpd", false);
+  optInvSteer  = prefs.getBool("invStr", false);
+  optLog       = prefs.getBool("log", true);
+  optSpeedMode = prefs.getInt("spdMode", 0);
+  centerX      = prefs.getInt("cx", 2048);
+  centerY      = prefs.getInt("cy", 2048);
+  deadzone     = prefs.getInt("dz", 180);
   uint8_t stored[6] = {0};
   size_t got = prefs.getBytes("peerMac", stored, 6);
   prefs.end();
@@ -139,6 +146,7 @@ void saveSettings() {
   prefs.putBool("invSpd", optInvSpeed);
   prefs.putBool("invStr", optInvSteer);
   prefs.putBool("log", optLog);
+  prefs.putInt ("spdMode", optSpeedMode);
   prefs.putInt("cx", centerX);
   prefs.putInt("cy", centerY);
   prefs.putInt("dz", deadzone);
@@ -152,11 +160,13 @@ void savePeerMacToNVS(const uint8_t mac[6]) {
 
 // ===================== Menu =====================
 int menuIndex = 0;
+const int MENU_COUNT = 4;
 const char* menuName(int i) {
   switch (i) {
     case 0: return "Inv Spd";
     case 1: return "Inv Str";
-    case 2: return "Mode:";
+    case 2: return "Curve";
+    case 3: return "Speed";
     default: return "";
   }
 }
@@ -164,23 +174,34 @@ void menuToggle(int i) {
   switch (i) {
     case 0: optInvSpeed = !optInvSpeed; break;
     case 1: optInvSteer = !optInvSteer; break;
-    case 2: optLog = !optLog; break;
+    case 2: optLog      = !optLog;      break;
+    case 3: optSpeedMode = (optSpeedMode + 1) % 3; break;
   }
   saveSettings();
 }
 void drawMenu() {
   screen.clear();
-  for (int i = 0; i < 3; i++) {
-    int y = 14 + i * 12;
+  int start = menuIndex - 1;
+  if (start < 0) start = 0;
+  if (start + 3 > MENU_COUNT) start = max(0, MENU_COUNT - 3);
+  for (int row = 0; row < 3; ++row) {
+    int idx = start + row;
+    if (idx >= MENU_COUNT) break;
+    int y = 14 + row * 12;
     screen.setCursor(-4, y);
-    screen.print(i == menuIndex ? "~ " : " ");
+    screen.print(idx == menuIndex ? "~ " : "  ");
     screen.setCursor(5, y);
-    screen.print(menuName(i));
-    screen.setCursor(50, y);
-    if (i == 2)
-      screen.print(optLog ? "Log" : "Lin");
-    else
-      screen.print((i == 0 ? optInvSpeed : optInvSteer) ? "X" : "O");
+    screen.print(menuName(idx));
+    screen.setCursor(55, y);
+    switch (idx) {
+      case 0: screen.print(optInvSpeed ? "X" : "O"); break;
+      case 1: screen.print(optInvSteer ? "X" : "O"); break;
+      case 2: screen.print(optLog ? "Log" : "Lin"); break;
+      case 3:
+        screen.print(optSpeedMode == 0 ? "High" :
+                     optSpeedMode == 1 ? "Med"  : "Low");
+        break;
+    }
   }
   screen.update();
 }
@@ -226,7 +247,12 @@ void setup() {
   // Fast calibration
   const uint32_t T = 1000, t0 = millis();
   long sx = 0, sy = 0; int n = 0;
-  while (millis() - t0 < T) { sx += analogRead(POT_X_PIN); sy += analogRead(POT_Y_PIN); n++; delay(2); }
+  while (millis() - t0 < T) {
+    sx += analogRead(POT_X_PIN);
+    sy += analogRead(POT_Y_PIN);
+    n++;
+    delay(2);
+  }
   centerX = sx / max(1, n);
   centerY = sy / max(1, n);
   saveSettings();
@@ -236,7 +262,7 @@ void setup() {
   screen.clear();
   screen.setCursor(0, 14); screen.print("Speed: 0");
   screen.setCursor(0, 26); screen.print("Steer: 0");
-  screen.setCursor(0, 38); screen.print("Btn: Up");
+  screen.setCursor(0, 38); screen.print("Mode: High");
   screen.update();
 }
 
@@ -247,66 +273,151 @@ void loop() {
   int rawY = analogRead(POT_Y_PIN);
 
   bool btn = buttonPressed();
+
+  // ---------- Button press start ----------
   if (btn && !btnPrev) {
+    Serial.println("=== BUTTON PRESS START ===");
+    Serial.printf("UI State: %s, menuShown: %s, selectShown: %s\n", 
+                  (ui == RUN) ? "RUN" : (ui == MENU) ? "MENU" : "SELECT",
+                  menuShown ? "true" : "false",
+                  selectShown ? "true" : "false");
     tBtnDown = now;
-    menuShown = false;
-    selectShown = false;
+    
+    // Only reset flags if we're not already in a menu/screen
+    if (ui == RUN) {
+      menuShown = false;
+      selectShown = false;
+      buttonReleasedSinceEntry = false;
+      justEnteredViaLongPress = false;
+      justEnteredViaMacSelect = false;
+      Serial.println("Reset all flags to false (from RUN state)");
+    } else {
+      Serial.println("Already in menu/screen - keeping existing flags");
+    }
   }
 
+  // ---------- While holding ----------
   if (btn) {
     unsigned held = now - tBtnDown;
 
-    if (!selectShown && held >= LONG_PRESS_SELECT_MS) {
+    // 8s -> MAC select (from any state)
+    if (held >= LONG_PRESS_SELECT_MS) {
+      Serial.println("=== 8s HOLD - ENTERING MAC SELECT ===");
+      Serial.printf("Held for: %u ms\n", held);
       ui = SELECT;
       selectIdx = 0;
       drawSelect();
       selectShown = true;
+      buttonReleasedSinceEntry = false;
+      justEnteredViaMacSelect = true;
+      Serial.println("Set justEnteredViaMacSelect = true");
     }
-    else if (!menuShown && held >= LONG_PRESS_MENU_MS && ui == RUN) {
+    // 5s -> enter settings (only from RUN state)
+    else if (held >= LONG_PRESS_MENU_MS && ui == RUN) {
+      Serial.println("=== 5s HOLD - ENTERING SETTINGS ===");
+      Serial.printf("Held for: %u ms, UI was: RUN\n", held);
       ui = MENU;
       drawMenu();
       menuShown = true;
+      buttonReleasedSinceEntry = false;
+      justEnteredViaLongPress = true;
+      Serial.println("Set justEnteredViaLongPress = true");
     }
   }
 
+  // ---------- On release ----------
   if (!btn && btnPrev) {
-    if (ui == MENU && !selectShown && menuShown)
-      menuToggle(menuIndex);
-    else if (ui == SELECT && !selectShown) {
-      memcpy(PEER_MAC, BOARDS[selectIdx].mac, 6);
-      savePeerMacToNVS(PEER_MAC);
-      screen.clear();
-      screen.setCursor(0, 20);
-      screen.print("Saved. Rebooting");
-      screen.update();
-      delay(600);
-      ESP.restart();
+    unsigned held = now - tBtnDown;
+    Serial.println("=== BUTTON RELEASE ===");
+    Serial.printf("Held for: %u ms\n", held);
+    Serial.printf("UI: %s, menuShown: %s, selectShown: %s\n", 
+                  (ui == RUN) ? "RUN" : (ui == MENU) ? "MENU" : "SELECT",
+                  menuShown ? "true" : "false",
+                  selectShown ? "true" : "false");
+    Serial.printf("Flags - justEnteredViaLongPress: %s, justEnteredViaMacSelect: %s, buttonReleasedSinceEntry: %s\n",
+                  justEnteredViaLongPress ? "true" : "false",
+                  justEnteredViaMacSelect ? "true" : "false", 
+                  buttonReleasedSinceEntry ? "true" : "false");
+
+    if (ui == MENU && menuShown) {
+      Serial.println("In MENU mode");
+      if (justEnteredViaLongPress && held >= LONG_PRESS_MENU_MS) {
+        Serial.println("ACTION: Just entered via long press - doing nothing, clearing flag");
+        justEnteredViaLongPress = false;
+        buttonReleasedSinceEntry = true;
+      } else if (held >= LONG_PRESS_MENU_MS && buttonReleasedSinceEntry) {
+        Serial.println("ACTION: Long press in settings - EXITING TO RUN");
+        ui = RUN;
+        menuShown = false;
+        screen.clear();
+        screen.setCursor(0, 14); screen.print("Speed: 0");
+        screen.setCursor(0, 26); screen.print("Steer: 0");
+        const char* modeStr = (optSpeedMode==0?"High":optSpeedMode==1?"Med":"Low");
+        screen.setCursor(0, 38); screen.print("Mode: "); screen.print(modeStr);
+        screen.update();
+      } else {
+        Serial.printf("ACTION: Short click in settings - TOGGLING setting %d\n", menuIndex);
+        menuToggle(menuIndex);
+        drawMenu();
+        justEnteredViaLongPress = false; // Clear flag on any action
+      }
+      buttonReleasedSinceEntry = true;
+    }
+    else if (ui == SELECT && selectShown) {
+      Serial.println("In SELECT mode");
+      if (justEnteredViaMacSelect) {
+        Serial.println("ACTION: Just entered via MAC select - doing nothing, clearing flag");
+        justEnteredViaMacSelect = false;
+        buttonReleasedSinceEntry = true;
+      } else {
+        Serial.printf("ACTION: Release in MAC selection - SAVING MAC %d and rebooting\n", selectIdx);
+        memcpy(PEER_MAC, BOARDS[selectIdx].mac, 6);
+        savePeerMacToNVS(PEER_MAC);
+        screen.clear();
+        screen.setCursor(0, 20);
+        screen.print("Saved. Rebooting");
+        screen.update();
+        delay(600);
+        ESP.restart();
+      }
+    }
+    else {
+      Serial.println("No action taken - not in MENU or SELECT mode");
     }
   }
   btnPrev = btn;
 
-  // ----- SELECT MODE -----
+  // ---------- SELECT MODE ----------
   if (ui == SELECT) {
     float xPct = adcToPercent(rawX, centerX);
-    if (xPct > 30) { selectIdx = (selectIdx - 1 + (int)NUM_BOARDS) % (int)NUM_BOARDS; delay(180); }
-    else if (xPct < -30) { selectIdx = (selectIdx + 1) % (int)NUM_BOARDS; delay(180); }
-    drawSelect();
+    if (!xMoved && (xPct > 70 || xPct < -70)) {
+      if (xPct > 70) selectIdx = (selectIdx - 1 + (int)NUM_BOARDS) % (int)NUM_BOARDS;
+      if (xPct < -70) selectIdx = (selectIdx + 1) % (int)NUM_BOARDS;
+      drawSelect(); xMoved = true;
+    } else if (xMoved && abs(xPct) < 40) xMoved = false;
     return;
   }
 
-  // ----- MENU MODE -----
+  // ---------- MENU MODE ----------
   if (ui == MENU) {
     float xPct = adcToPercent(rawX, centerX);
-    if (xPct > 30) { menuIndex = (menuIndex + 2) % 3; delay(180); }
-    else if (xPct < -30) { menuIndex = (menuIndex + 1) % 3; delay(180); }
-    drawMenu();
+    if (!xMoved && (xPct > 70 || xPct < -70)) {
+      if (xPct > 70) menuIndex = (menuIndex + 1) % MENU_COUNT;
+      if (xPct < -70) menuIndex = (menuIndex + MENU_COUNT - 1) % MENU_COUNT;
+      drawMenu(); xMoved = true;
+    } else if (xMoved && abs(xPct) < 40) xMoved = false;
     return;
   }
 
-  // ----- RUN MODE -----
+  // ---------- RUN MODE ----------
   float xPct = adcToPercent(rawX, centerX);
   float yPct = adcToPercent(rawY, centerY);
   if (optLog) { xPct = curveLog(xPct); yPct = curveLog(yPct); }
+
+  float limit = SPEED_LIMITS[optSpeedMode];
+  xPct = clampf(xPct, -limit, limit);
+  yPct = clampf(yPct, -limit, limit);
+
   int speed = (int)roundf(clampf(-xPct, -100.0f, 100.0f));
   int steer = (int)roundf(clampf(+yPct, -100.0f, 100.0f));
   if (optInvSpeed) speed = -speed;
@@ -326,7 +437,8 @@ void loop() {
     screen.setCursor(0, 26);
     snprintf(line, sizeof(line), "Steer:%5d", steer); screen.print(line);
     screen.setCursor(0, 38);
-    screen.print("Btn: "); screen.print(buttonPressed() ? "Down" : "Up");
+    const char* modeStr = (optSpeedMode==0?"High":optSpeedMode==1?"Med":"Low");
+    screen.print("Mode: "); screen.print(modeStr);
     screen.update();
   }
 }
