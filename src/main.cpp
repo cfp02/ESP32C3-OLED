@@ -51,12 +51,18 @@ bool optInvSpeed = false;
 bool optInvSteer = false;
 bool optLog = true;
 int  optSpeedMode = 0; // 0=High, 1=Med, 2=Low
+int  optTurnMod = 0; // 0=Off, 1=1/2, 2=1/4, 3=Dyn
+int  optRampRate = 0; // 0=Off, 1=Hi, 2=Med, 3=Low
 const float SPEED_LIMITS[3] = {100.0f, 60.0f, 30.0f};
+const float RAMP_RATES[3] = {10.0f, 5.0f, 2.0f}; // % per cycle (Hi, Med, Low)
 
 uint8_t seq = 0;
 uint32_t tLastSend = 0, tLastOLED = 0;
 const unsigned SEND_MS = 20;
 const unsigned OLED_MS = 100;
+
+int lastSpeed = 0;
+int lastSteer = 0;
 
 bool btnPrev = false;
 uint32_t tBtnDown = 0;
@@ -130,6 +136,8 @@ void loadSettings() {
   optInvSteer  = prefs.getBool("invStr", false);
   optLog       = prefs.getBool("log", true);
   optSpeedMode = prefs.getInt("spdMode", 0);
+  optTurnMod   = prefs.getInt("turnMod", 0);
+  optRampRate  = prefs.getInt("rampRate", 0);
   centerX      = prefs.getInt("cx", 2048);
   centerY      = prefs.getInt("cy", 2048);
   deadzone     = prefs.getInt("dz", 180);
@@ -148,6 +156,8 @@ void saveSettings() {
   prefs.putBool("invStr", optInvSteer);
   prefs.putBool("log", optLog);
   prefs.putInt ("spdMode", optSpeedMode);
+  prefs.putInt ("turnMod", optTurnMod);
+  prefs.putInt ("rampRate", optRampRate);
   prefs.putInt("cx", centerX);
   prefs.putInt("cy", centerY);
   prefs.putInt("dz", deadzone);
@@ -161,13 +171,15 @@ void savePeerMacToNVS(const uint8_t mac[6]) {
 
 // ===================== Menu =====================
 int menuIndex = 0;
-const int MENU_COUNT = 4;
+const int MENU_COUNT = 6;
 const char* menuName(int i) {
   switch (i) {
     case 0: return "Inv Spd";
     case 1: return "Inv Str";
     case 2: return "Curve";
     case 3: return "Speed";
+    case 4: return "Turn Mod";
+    case 5: return "Ramp";
     default: return "";
   }
 }
@@ -177,6 +189,8 @@ void menuToggle(int i) {
     case 1: optInvSteer = !optInvSteer; break;
     case 2: optLog      = !optLog;      break;
     case 3: optSpeedMode = (optSpeedMode + 1) % 3; break;
+    case 4: optTurnMod = (optTurnMod + 1) % 4; break;
+    case 5: optRampRate = (optRampRate + 1) % 4; break;
   }
   saveSettings();
 }
@@ -201,6 +215,16 @@ void drawMenu() {
       case 3:
         screen.print(optSpeedMode == 0 ? "High" :
                      optSpeedMode == 1 ? "Med"  : "Low");
+        break;
+      case 4:
+        screen.print(optTurnMod == 0 ? "Off" :
+                     optTurnMod == 1 ? "1/2" :
+                     optTurnMod == 2 ? "1/4" : "Dyn");
+        break;
+      case 5:
+        screen.print(optRampRate == 0 ? "Off" :
+                     optRampRate == 1 ? "Hi" :
+                     optRampRate == 2 ? "Med" : "Low");
         break;
     }
   }
@@ -395,12 +419,49 @@ void loop() {
 
   int speed = (int)roundf(clampf(-xPct, -100.0f, 100.0f));
   int steer = (int)roundf(clampf(+yPct, -100.0f, 100.0f));
+  
+  // Apply turn modifier
+  if (optTurnMod == 1) {
+    // 1/2 scaling
+    steer = (int)roundf(steer * 0.5f);
+  } else if (optTurnMod == 2) {
+    // 1/4 scaling
+    steer = (int)roundf(steer * 0.25f);
+  } else if (optTurnMod == 3) {
+    // Dynamic scaling based on speed
+    float speedFactor = 1.0f - (abs(speed) * 0.5f / 100.0f);
+    steer = (int)roundf(steer * speedFactor);
+  }
+  
   if (optInvSpeed) speed = -speed;
   if (optInvSteer) steer = -steer;
+
+  // Apply ramping if enabled
+  if (optRampRate > 0) {
+    float maxChange = RAMP_RATES[optRampRate - 1]; // -1 because 0=Off, 1=Hi, 2=Med, 3=Low
+    
+    // Ramp speed
+    if (speed > lastSpeed) {
+      speed = (int)min((float)lastSpeed + maxChange, (float)speed);
+    } else if (speed < lastSpeed) {
+      speed = (int)max((float)lastSpeed - maxChange, (float)speed);
+    }
+    
+    // Ramp steer
+    if (steer > lastSteer) {
+      steer = (int)min((float)lastSteer + maxChange, (float)steer);
+    } else if (steer < lastSteer) {
+      steer = (int)max((float)lastSteer - maxChange, (float)steer);
+    }
+  }
 
   if (now - tLastSend >= SEND_MS) {
     tLastSend = now;
     sendPacket(speed, steer);
+    
+    // Update last values for ramping (track actual sent values)
+    lastSpeed = speed;
+    lastSteer = steer;
   }
 
   if (now - tLastOLED >= OLED_MS) {
